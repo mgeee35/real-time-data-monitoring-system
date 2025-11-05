@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Sensor Control Panel</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+    <style>
+        .sensor-card {
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s;
+        }
+        .sensor-card:hover {
+            transform: translateY(-2px);
+        }
+        .status-online { color: #28a745; }
+        .status-offline { color: #dc3545; }
+        .chart-container {
+            height: 400px;
+            margin: 20px 0;
+        }
+        .data-table {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body class="bg-light">
+    <div class="container-fluid py-4">
+        <!-- Header -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h1 class="text-center mb-3">ESP32 Sensor Control System</h1>
+                <div class="text-center">
+                    <span id="connectionStatus" class="badge bg-secondary">Connecting...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card sensor-card">
+                    <div class="card-header bg-primary text-white">
+                        <h5>Sensor Controls</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-6">
+                                <label class="form-label">Distance Sensor</label>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="distanceToggle">
+                                    <label class="form-check-label" for="distanceToggle">
+                                        <span id="distanceStatus">Off</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label">LDR Sensor</label>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="ldrToggle">
+                                    <label class="form-check-label" for="ldrToggle">
+                                        <span id="ldrStatus">Off</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card sensor-card">
+                    <div class="card-header bg-info text-white">
+                        <h5>Data Settings</h5>
+                    </div>
+                    <div class="card-body">
+                        <label class="form-label">Data Refresh Rate</label>
+                        <select class="form-select" id="dataRate">
+                            <option value="1">1 Second</option>
+                            <option value="2">2 Seconds</option>
+                            <option value="3">3 Seconds</option>
+                            <option value="5" selected>5 Seconds</option>
+                            <option value="10">10 Seconds</option>
+                            <option value="15">15 Seconds</option>
+                            <option value="20">20 Seconds</option>
+                        </select>
+                        <button class="btn btn-info mt-2" onclick="updateDataRate()">Update</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Current Values -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card sensor-card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title text-primary">Distance</h5>
+                        <h2 id="currentDistance" class="text-primary">-- cm</h2>
+                        <small class="text-muted">Last Update: <span id="distanceTime">--</span></small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card sensor-card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title text-success">Light Intensity</h5>
+                        <h2 id="currentLdr" class="text-success">-- %</h2>
+                        <small class="text-muted">Last Update: <span id="ldrTime">--</span></small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card sensor-card">
+                    <div class="card-header bg-success text-white">
+                        <h5>Sensor Data Chart</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="sensorChart" class="chart-container"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Table -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card sensor-card">
+                    <div class="card-header bg-warning text-dark">
+                        <h5>Data Table</h5>
+                        <button class="btn btn-sm btn-outline-dark float-end" onclick="clearData()">Clear Data</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="data-table">
+                            <table class="table table-striped table-hover">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Distance (cm)</th>
+                                        <th>Light Intensity (%)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="dataTableBody">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let ws;
+        let sensorData = [];
+        let chart;
+        let chartData;
+
+        // Load Google Charts
+        google.charts.load('current', { packages: ['line'] });
+        google.charts.setOnLoadCallback(initChart);
+
+        // WebSocket Connection
+        function connectWebSocket() {
+            ws = new WebSocket('ws://' + location.hostname + ':3000');
+
+            ws.onopen = function () {
+                document.getElementById('connectionStatus').textContent = 'Connected';
+                document.getElementById('connectionStatus').className = 'badge bg-success';
+            };
+
+            ws.onmessage = function (event) {
+                const data = JSON.parse(event.data);
+                handleSensorData(data);
+            };
+
+            ws.onclose = function () {
+                document.getElementById('connectionStatus').textContent = 'Disconnected';
+                document.getElementById('connectionStatus').className = 'badge bg-danger';
+                // Reconnect after 3 seconds
+                setTimeout(connectWebSocket, 3000);
+            };
+
+            ws.onerror = function (error) {
+                console.error('WebSocket error:', error);
+                document.getElementById('connectionStatus').textContent = 'Connection Error';
+                document.getElementById('connectionStatus').className = 'badge bg-danger';
+            };
+        }
+
+        // Initialize Chart
+        function initChart() {
+            chartData = new google.visualization.DataTable();
+            chartData.addColumn('datetime', 'Time');
+            chartData.addColumn('number', 'Distance (cm)');
+            chartData.addColumn('number', 'Light Intensity (%)');
+
+            const options = {
+                chart: {
+                    title: 'ESP32 Sensor Data',
+                    subtitle: 'Real-Time Monitoring'
+                },
+                width: '100%',
+                height: 350,
+                colors: ['#007bff', '#28a745'],
+                hAxis: { format: 'HH:mm:ss' },
+                vAxis: { title: 'Value' }
+            };
+
+            chart = new google.charts.Line(document.getElementById('sensorChart'));
+            chart.draw(chartData, google.charts.Line.convertOptions(options));
+        }
+
+        // Process incoming sensor data
+        function handleSensorData(data) {
+            const now = new Date();
+
+            if (data.type === 'sensorData') {
+                // Update current values
+                if (data.distance !== undefined) {
+                    document.getElementById('currentDistance').textContent = data.distance + ' cm';
+                    document.getElementById('distanceTime').textContent = now.toLocaleTimeString();
+                }
+                if (data.ldr !== undefined) {
+                    document.getElementById('currentLdr').textContent = data.ldr + ' %';
+                    document.getElementById('ldrTime').textContent = now.toLocaleTimeString();
+                }
+
+                // Store data (keep last 20 points)
+                sensorData.push({
+                    time: now,
+                    distance: data.distance || null,
+                    ldr: data.ldr || null
+                });
+                if (sensorData.length > 20) sensorData.shift();
+
+                updateDataTable();
+                updateChart();
+            }
+
+            // Handle status updates (optional)
+            if (data.type === 'status') {
+                // You can add status indicators here if needed
+            }
+        }
+
+        // Update data table
+        function updateDataTable() {
+            const tbody = document.getElementById('dataTableBody');
+            tbody.innerHTML = '';
+
+            sensorData.slice().reverse().forEach(d => {
+                const row = tbody.insertRow();
+                row.insertCell(0).textContent = d.time.toLocaleString();
+                row.insertCell(1).textContent = d.distance !== null ? d.distance + ' cm' : '--';
+                row.insertCell(2).textContent = d.ldr !== null ? d.ldr + ' %' : '--';
+            });
+        }
+
+        // Update chart
+        function updateChart() {
+            if (!chart || sensorData.length === 0) return;
+
+            chartData = new google.visualization.DataTable();
+            chartData.addColumn('datetime', 'Time');
+            chartData.addColumn('number', 'Distance (cm)');
+            chartData.addColumn('number', 'Light Intensity (%)');
+
+            sensorData.forEach(d => {
+                chartData.addRow([d.time, d.distance, d.ldr]);
+            });
+
+            const options = {
+                chart: { title: 'ESP32 Sensor Data', subtitle: 'Real-Time Monitoring' },
+                width: '100%',
+                height: 350,
+                colors: ['#007bff', '#28a745'],
+                hAxis: { format: 'HH:mm:ss' }
+            };
+
+            chart.draw(chartData, google.charts.Line.convertOptions(options));
+        }
+
+        // Send sensor control command
+        function sendSensorControl(sensor, state) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'control',
+                    sensor: sensor,
+                    state: state
+                }));
+            }
+        }
+
+        // Update data rate
+        function updateDataRate() {
+            const rate = document.getElementById('dataRate').value;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'dataRate',
+                    rate: parseInt(rate)
+                }));
+            }
+        }
+
+        // Clear all data
+        function clearData() {
+            sensorData = [];
+            updateDataTable();
+            updateChart();
+        }
+
+        // Event Listeners
+        document.getElementById('distanceToggle').addEventListener('change', function () {
+            const isOn = this.checked;
+            document.getElementById('distanceStatus').textContent = isOn ? 'On' : 'Off';
+            sendSensorControl('distance', isOn);
+        });
+
+        document.getElementById('ldrToggle').addEventListener('change', function () {
+            const isOn = this.checked;
+            document.getElementById('ldrStatus').textContent = isOn ? 'On' : 'Off';
+            sendSensorControl('ldr', isOn);
+        });
+
+        // Auto-connect on page load
+        window.addEventListener('load', connectWebSocket);
+    </script>
+</body>
+</html>

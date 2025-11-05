@@ -1,0 +1,7 @@
+docker compose up -d
+docker ps
+docker ps -a
+docker stop CON_ID
+docker start CON_ID
+npx nodemon server
+
